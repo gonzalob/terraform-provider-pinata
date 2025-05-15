@@ -37,12 +37,21 @@ func (c *Client) PinFolder(files []string, name, version string) (*PinFileToIpfs
 		reader, _ := os.Open(file)
 		defer reader.Close()
 		part, _ := writer.CreateFormFile("file", file)
-		io.Copy(part, reader)
+		_, err := io.Copy(part, reader)
+		if err != nil {
+			return nil, err
+		}
 	}
 	metadata, _ := writer.CreateFormField("pinataMetadata")
-	metadata.Write(fmt.Appendf(nil, `{"name":"%s"}`, name))
+	_, err := metadata.Write(fmt.Appendf(nil, `{"name":"%s"}`, name))
+	if err != nil {
+		return nil, err
+	}
 	options, _ := writer.CreateFormField("pinataOptions")
-	options.Write(fmt.Appendf(nil, `{"cidVersion":%s}`, version))
+	_, err = options.Write(fmt.Appendf(nil, `{"cidVersion":%s}`, version))
+	if err != nil {
+		return nil, err
+	}
 	writer.Close()
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/pinning/pinFileToIPFS", c.HostURL), body)
