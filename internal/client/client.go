@@ -2,14 +2,13 @@ package client
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 )
 
 const HostURL string = "https://api.pinata.cloud"
 
-// Client -
 type Client struct {
 	HostURL    string
 	HTTPClient *http.Client
@@ -22,13 +21,15 @@ func NewClient(host, token *string) (*Client, error) {
 		HostURL:    HostURL,
 	}
 
-	if host != nil {
+	if host != nil && *host != "" {
 		c.HostURL = *host
 	}
 
 	if token == nil {
 		return &c, nil
 	}
+
+	c.Token = *token
 
 	return &c, nil
 }
@@ -44,7 +45,7 @@ func (c *Client) doRequest(req *http.Request) ([]byte, error) {
 	}
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}

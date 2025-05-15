@@ -8,13 +8,8 @@ type PinFileToIpfs struct {
 
 type PinById struct {
 	Data struct {
-		ID   int    `json:"id"`
+		ID   string `json:"id"`
 		Name string `json:"name"`
 		CID  string `json:"cid"`
 	} `json:"data"`
-}
-
-type File struct {
-	name string
-	path string
 }

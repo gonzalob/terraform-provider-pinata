@@ -30,22 +30,23 @@ func (c *Client) GetPinById(id string) (*PinById, error) {
 	return &pin, nil
 }
 
-func (c *Client) PinFolder(files []File, name, version string) (*PinFileToIpfs, error) {
+func (c *Client) PinFolder(files []string, name, version string) (*PinFileToIpfs, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	for _, file := range files {
-		reader, _ := os.Open(file.path)
+		reader, _ := os.Open(file)
 		defer reader.Close()
-		part, _ := writer.CreateFormFile("file", file.name)
+		part, _ := writer.CreateFormFile("file", file)
 		io.Copy(part, reader)
 	}
 	metadata, _ := writer.CreateFormField("pinataMetadata")
-	metadata.Write([]byte(fmt.Sprintf(`{"name":"%s"}`, name)))
+	metadata.Write(fmt.Appendf(nil, `{"name":"%s"}`, name))
 	options, _ := writer.CreateFormField("pinataOptions")
-	options.Write([]byte(fmt.Sprintf(`{"cidVersion":%s}`, version)))
+	options.Write(fmt.Appendf(nil, `{"cidVersion":%s}`, version))
 	writer.Close()
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/pinning/pinFileToIPFS", c.HostURL), body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if err != nil {
 		return nil, err
 	}
