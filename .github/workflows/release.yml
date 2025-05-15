@@ -1,4 +1,3 @@
-# Terraform Provider release workflow.
 name: Release
 
 on:
