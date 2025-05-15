@@ -77,7 +77,7 @@ func (r *pinResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 
 	name := plan.Name
-	if name.IsUnknown() {
+	if name.IsNull() {
 		name = types.StringValue(fmt.Sprintf("terraform-%d", time.Now().UnixMilli()))
 	}
 
