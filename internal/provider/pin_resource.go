@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 var (
@@ -23,15 +24,20 @@ func NewPinResource() resource.Resource {
 }
 
 type pinResourceModel struct {
-	ID      types.String   `tfsdk:"id"`
-	CID     types.String   `tfsdk:"cid"`
-	Name    types.String   `tfsdk:"name"`
-	Version types.Number   `tfsdk:"version"`
-	Paths   []types.String `tfsdk:"paths"`
+	ID      types.String `tfsdk:"id"`
+	CID     types.String `tfsdk:"cid"`
+	Name    types.String `tfsdk:"name"`
+	Version types.Number `tfsdk:"version"`
+	Paths   []Path       `tfsdk:"paths"`
 }
 
 type pinResource struct {
 	client *client.Client
+}
+
+type Path struct {
+	Name types.String `tfsdk:"name"`
+	Hash types.String `tfsdk:"hash"`
 }
 
 func (r *pinResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -59,10 +65,21 @@ func (r *pinResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Optional:    true,
 				Computed:    true,
 			},
-			"paths": schema.ListAttribute{
-				ElementType: types.StringType,
-				Description: "Local path to the uploaded blobs",
+			"paths": schema.ListNestedAttribute{
+				Description: "Local paths for the pin",
 				Required:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Description: "Path to each of the assets",
+							Required:    true,
+						},
+						"hash": schema.StringAttribute{
+							Description: "Resource checksum",
+							Required:    true,
+						},
+					},
+				},
 			},
 		},
 	}
@@ -77,13 +94,13 @@ func (r *pinResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 
 	name := plan.Name
-	if name.IsNull() {
+	if name.IsNull() || name.IsUnknown() {
 		name = types.StringValue(fmt.Sprintf("terraform-%d", time.Now().UnixMilli()))
 	}
 
 	var files []string
 	for _, path := range plan.Paths {
-		files = append(files, path.ValueString())
+		files = append(files, path.Name.ValueString())
 	}
 
 	pin, err := r.client.PinFolder(files, name.ValueString(), plan.Version.String())
@@ -157,11 +174,13 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 
 	var files []string
-	for _, path := range plan.Paths {
-		files = append(files, path.ValueString())
+	var name types.String
+	name = plan.Name
+	if name.IsNull() {
+		name = state.Name
 	}
 
-	pin, err := r.client.PinFolder(files, plan.Name.ValueString(), plan.Version.String())
+	pin, err := r.client.PinFolder(files, name.ValueString(), plan.Version.String())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error pinning",
@@ -171,7 +190,6 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 	plan.ID = types.StringValue(pin.ID)
 	plan.CID = types.StringValue(pin.IPFSHash)
-	plan.Paths = state.Paths
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -198,7 +216,7 @@ func (r *pinResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	}
 }
 
-func (r *pinResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *pinResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -214,6 +232,8 @@ func (r *pinResource) Configure(_ context.Context, req resource.ConfigureRequest
 		return
 	}
 
+	ctx = tflog.SetField(ctx, "client", client)
+	tflog.Info(ctx, "configured")
 	r.client = client
 }
 
