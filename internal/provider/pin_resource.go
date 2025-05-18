@@ -2,13 +2,18 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"terraform-provider-pinata/internal/client"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -17,6 +22,7 @@ var (
 	_ resource.Resource                = &pinResource{}
 	_ resource.ResourceWithConfigure   = &pinResource{}
 	_ resource.ResourceWithImportState = &pinResource{}
+	_ resource.ResourceWithModifyPlan  = &pinResource{}
 )
 
 func NewPinResource() resource.Resource {
@@ -24,20 +30,16 @@ func NewPinResource() resource.Resource {
 }
 
 type pinResourceModel struct {
-	ID      types.String `tfsdk:"id"`
-	CID     types.String `tfsdk:"cid"`
-	Name    types.String `tfsdk:"name"`
-	Version types.Number `tfsdk:"version"`
-	Paths   []Path       `tfsdk:"paths"`
+	ID       types.String   `tfsdk:"id"`
+	CID      types.String   `tfsdk:"cid"`
+	Name     types.String   `tfsdk:"name"`
+	Version  types.Number   `tfsdk:"version"`
+	Paths    []types.String `tfsdk:"paths"`
+	Checksum types.String   `tfsdk:"hash"`
 }
 
 type pinResource struct {
 	client *client.Client
-}
-
-type Path struct {
-	Name types.String `tfsdk:"name"`
-	Hash types.String `tfsdk:"hash"`
 }
 
 func (r *pinResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -65,21 +67,17 @@ func (r *pinResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Optional:    true,
 				Computed:    true,
 			},
-			"paths": schema.ListNestedAttribute{
+			"paths": schema.ListAttribute{
+				ElementType: types.StringType,
 				Description: "Local paths for the pin",
 				Required:    true,
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"name": schema.StringAttribute{
-							Description: "Path to each of the assets",
-							Required:    true,
-						},
-						"hash": schema.StringAttribute{
-							Description: "Resource checksum",
-							Required:    true,
-						},
-					},
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
 				},
+			},
+			"hash": schema.StringAttribute{
+				Description: "Resource checksum",
+				Computed:    true,
 			},
 		},
 	}
@@ -98,9 +96,12 @@ func (r *pinResource) Create(ctx context.Context, req resource.CreateRequest, re
 		name = types.StringValue(fmt.Sprintf("terraform-%d", time.Now().UnixMilli()))
 	}
 
-	var files []string
-	for _, path := range plan.Paths {
-		files = append(files, path.Name.ValueString())
+	checksum, files, err := paths(plan.Paths)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error pinning",
+			"Could not compute checksum: "+err.Error(),
+		)
 	}
 
 	pin, err := r.client.PinFolder(files, name.ValueString(), plan.Version.String())
@@ -114,6 +115,7 @@ func (r *pinResource) Create(ctx context.Context, req resource.CreateRequest, re
 	plan.ID = types.StringValue(pin.ID)
 	plan.CID = types.StringValue(pin.IPFSHash)
 	plan.Name = types.StringValue(pin.Name)
+	plan.Checksum = types.StringValue(checksum)
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -142,6 +144,9 @@ func (r *pinResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	state.ID = types.StringValue(pin.Data.ID)
 	state.CID = types.StringValue(pin.Data.CID)
 	state.Name = types.StringValue(pin.Data.Name)
+	if state.Checksum.IsNull() {
+		state.Checksum = types.StringUnknown()
+	}
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
@@ -173,7 +178,13 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	var files []string
+	checksum, files, err := paths(plan.Paths)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error pinning",
+			"Could not process paths: "+err.Error(),
+		)
+	}
 	var name types.String
 	name = plan.Name
 	if name.IsNull() {
@@ -190,6 +201,7 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 	plan.ID = types.StringValue(pin.ID)
 	plan.CID = types.StringValue(pin.IPFSHash)
+	plan.Checksum = types.StringValue(checksum)
 
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
@@ -239,4 +251,54 @@ func (r *pinResource) Configure(ctx context.Context, req resource.ConfigureReque
 
 func (r *pinResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func paths(list []types.String) (string, []string, error) {
+	checksum := sha256.New()
+	var paths []string
+	for _, path := range list {
+		value := path.ValueString()
+		s, err := os.ReadFile(value)
+		if err != nil {
+			return "", nil, err
+		}
+		paths = append(paths, value)
+		checksum.Write(s)
+	}
+	return hex.EncodeToString(checksum.Sum(nil)), paths, nil
+}
+
+func (r *pinResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() {
+		return
+	}
+
+	var plan pinResourceModel
+	var state pinResourceModel
+	diags := req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	diags = req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	computed, _, err := paths(plan.Paths)
+	if err != nil {
+		return
+	}
+
+	plan.Checksum = types.StringValue(computed)
+	if computed != state.Checksum.ValueString() {
+		resp.RequiresReplace = path.Paths{path.Root("hash")}
+	}
+
+	diags = resp.Plan.Set(ctx, plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 }
