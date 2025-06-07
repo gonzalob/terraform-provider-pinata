@@ -15,7 +15,7 @@ Manages an IPFS pin
 ```terraform
 resource "pinata_pin" "pin" {
   version = 0               # cid version to use. valid values are 0 and 1
-  paths   = ["resource.tf"] # list of files to pin to ipfs for this resource
+  paths   = ["resource.tf"] # list of files (in the workspace) to pin to ipfs for this resource
   name    = "example"       # optional. the descriptive name on pinata for this pin
 }
 ```
@@ -25,7 +25,7 @@ resource "pinata_pin" "pin" {
 
 ### Required
 
-- `paths` (List of String) Local path to the uploaded blobs
+- `paths` (List of String) Local paths for the pin
 - `version` (Number) The CID version to use
 
 ### Optional
@@ -35,4 +35,5 @@ resource "pinata_pin" "pin" {
 ### Read-Only
 
 - `cid` (String) The pin's IPFS Content ID
+- `hash` (String) Resource checksum
 - `id` (String) Pinata ID for the pin
