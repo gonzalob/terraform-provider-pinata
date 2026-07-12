@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 const HostURL string = "https://api.pinata.cloud"
@@ -17,7 +16,7 @@ type Client struct {
 
 func NewClient(host, token *string) (*Client, error) {
 	c := Client{
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: &http.Client{},
 		HostURL:    HostURL,
 	}
 

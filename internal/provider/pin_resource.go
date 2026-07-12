@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"terraform-provider-pinata/internal/client"
 	"time"
@@ -104,7 +105,7 @@ func (r *pinResource) Create(ctx context.Context, req resource.CreateRequest, re
 		)
 	}
 
-	pin, err := r.client.PinFolder(files, name.ValueString(), plan.Version.String())
+	pin, err := r.client.PinFolder(ctx, files, name.ValueString(), plan.Version.String())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error pinning",
@@ -132,7 +133,7 @@ func (r *pinResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 
-	pin, err := r.client.GetPinById((state.ID.ValueString()))
+	pin, err := r.client.GetPinById(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Reading Pinata pin",
@@ -169,7 +170,7 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	err := r.client.Unpin(state.ID.ValueString())
+	err := r.client.Unpin(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error unpinning pin",
@@ -191,7 +192,7 @@ func (r *pinResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		name = state.Name
 	}
 
-	pin, err := r.client.PinFolder(files, name.ValueString(), plan.Version.String())
+	pin, err := r.client.PinFolder(ctx, files, name.ValueString(), plan.Version.String())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error pinning",
@@ -218,7 +219,7 @@ func (r *pinResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 		return
 	}
 
-	err := r.client.Unpin(state.ID.ValueString())
+	err := r.client.Unpin(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error unpinning pin",
@@ -258,12 +259,16 @@ func paths(list []types.String) (string, []string, error) {
 	var paths []string
 	for _, path := range list {
 		value := path.ValueString()
-		s, err := os.ReadFile(value)
+		f, err := os.Open(value)
 		if err != nil {
 			return "", nil, err
 		}
+		if _, err := io.Copy(checksum, f); err != nil {
+			f.Close()
+			return "", nil, err
+		}
+		f.Close()
 		paths = append(paths, value)
-		checksum.Write(s)
 	}
 	return hex.EncodeToString(checksum.Sum(nil)), paths, nil
 }
